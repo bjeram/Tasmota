@@ -71,6 +71,7 @@
 #define D_COLDLIGHT "Холодний"
 #define D_COMMAND "Команда"
 #define D_CONNECTED "Під'єднано"
+#define D_CORS_DOMAIN "CORS Domain"
 #define D_COUNT "Розмір"
 #define D_COUNTER "Лічильник"
 #define D_CURRENT "Струм"           // As in Voltage and Current
@@ -352,6 +353,7 @@
 #define D_UPLOAD_ERR_11 "Помилка стирання чипу RF"
 #define D_UPLOAD_ERR_12 "Помилка запису чипу RF"
 #define D_UPLOAD_ERR_13 "Помилка розкодування прошивки RF"
+#define D_UPLOAD_ERR_14 "Not compatible"
 #define D_UPLOAD_ERROR_CODE "Код помилки завантаження"
 
 #define D_ENTER_COMMAND "Уведіть команду"

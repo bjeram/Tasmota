@@ -71,6 +71,7 @@
 #define D_COLDLIGHT "Fredda"
 #define D_COMMAND "Comando"
 #define D_CONNECTED "Connesso"
+#define D_CORS_DOMAIN "CORS Domain"
 #define D_COUNT "Conteggio"
 #define D_COUNTER "Contatore"
 #define D_CURRENT "Corrente"          // As in Voltage and Current
@@ -352,6 +353,7 @@
 #define D_UPLOAD_ERR_11 "Cancellazione fallita del chip RF"
 #define D_UPLOAD_ERR_12 "Scrittura fallita del chip RF"
 #define D_UPLOAD_ERR_13 "Decodifica fallita del firmware RF"
+#define D_UPLOAD_ERR_14 "Not compatible"
 #define D_UPLOAD_ERROR_CODE "Codice errore invio"
 
 #define D_ENTER_COMMAND "Inserire comando"

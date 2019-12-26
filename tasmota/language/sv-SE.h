@@ -71,6 +71,7 @@
 #define D_COLDLIGHT "Kallt"
 #define D_COMMAND "Kommando"
 #define D_CONNECTED "Ansluten"
+#define D_CORS_DOMAIN "CORS Domain"
 #define D_COUNT "Räkna"
 #define D_COUNTER "Räknare"
 #define D_CURRENT "Ström"          // As in Voltage and Current
@@ -352,6 +353,7 @@
 #define D_UPLOAD_ERR_11 "Misslyckades rensa RF chip"
 #define D_UPLOAD_ERR_12 "Misslyckades skriva till RF chip"
 #define D_UPLOAD_ERR_13 "Misslyckades avkoda RF firmware"
+#define D_UPLOAD_ERR_14 "Not compatible"
 #define D_UPLOAD_ERROR_CODE "Uppladdningsfelkod"
 
 #define D_ENTER_COMMAND "Ange kommando"
