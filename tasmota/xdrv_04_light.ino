@@ -112,12 +112,11 @@
  *     to adjust leds with different power
  *  .g If rgbwwTable[4] is zero, blend RGB with White and adjust the level of
  *     White channel according to rgbwwTable[3]
- *  .h Avoid PMW values between 1008 and 1022, issue #1146
- *  .i Scale ranges from 10 bits to 0..PWMRange (by default 1023) so no change
+ *  .h Scale ranges from 10 bits to 0..PWMRange (by default 1023) so no change
  *     by default.
- *  .j Apply port remapping from Option37
- *  .k Invert PWM value if port is of type PMWxi instead of PMWx
- *  .l Apply PWM value with analogWrite() - if pin is configured
+ *  .i Apply port remapping from Option37
+ *  .j Invert PWM value if port is of type PMWxi instead of PMWx
+ *  .k Apply PWM value with analogWrite() - if pin is configured
  *
 \*********************************************************************************************/
 
@@ -161,73 +160,83 @@ struct LCwColor {
 const uint8_t MAX_FIXED_COLD_WARM = 4;
 const LCwColor kFixedColdWarm[MAX_FIXED_COLD_WARM] PROGMEM = { 0,0, 255,0, 0,255, 128,128 };
 
-// New version of Gamma correction table, with adaptative resolution
-// from 11 bits (lower values) to 8 bits (upper values).
-// We're using the fact that lower values are small and can fit within 8 bits
-// To save flash space, the array is only 8 bits uint
-#ifdef XFUNC_PTR_IN_ROM
-const uint8_t _ledTable[] PROGMEM = {
-#else
-const uint8_t _ledTable[] = {
-#endif
-  // 11 bits resolution
-    0,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  // 11 bits, 0..2047
-    2,  2,  2,  2,  3,  3,  3,  3,  4,  4,  4,  5,  5,  6,  6,  7,  // 11 bits, 0..2047
-    7,  8,  8,  9, 10, 10, 11, 12, 12, 13, 14, 15, 16, 17, 18, 19,  // 11 bits, 0..2047
-   20, 21, 22, 24, 25, 26, 28, 29, 30, 32, 33, 35, 37, 38, 40, 42,  // 11 bits, 0..2047
-  // 10 bits resolution
-   22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34, 36, 37, 38, 39,  // 10 bits, 0..1023
-   41, 42, 44, 45, 47, 48, 50, 51, 53, 55, 56, 58, 60, 62, 64, 65,  // 10 bits, 0..1023
-   67, 69, 71, 73, 75, 78, 80, 82, 84, 86, 89, 91, 93, 96, 98,101,  // 10 bits, 0..1023
-  103,106,108,111,114,116,119,122,125,128,131,134,137,140,143,146,  // 10 bits, 0..1023
-  // 9 bits resolution
-   75, 77, 78, 80, 82, 84, 85, 87, 89, 91, 93, 94, 96, 98,100,102,  //  9 bits, 0..511
-  104,106,108,110,112,115,117,119,121,123,125,128,130,132,135,137,  //  9 bits, 0..511
-  140,142,144,147,149,152,155,157,160,163,165,168,171,173,176,179,  //  9 bits, 0..511
-  182,185,188,191,194,197,200,203,206,209,212,215,219,222,225,229,  //  9 bits, 0..511
-  // 8 bits resolution
-  116,118,120,121,123,125,127,128,130,132,134,136,138,139,141,143,  //  8 bits, 0..255
-  145,147,149,151,153,155,157,159,161,163,165,168,170,172,174,176,  //  8 bits, 0..255
-  178,181,183,185,187,190,192,194,197,199,201,204,206,209,211,214,  //  8 bits, 0..255
-  216,219,221,224,226,229,232,234,237,240,242,245,248,250,253,255   //  8 bits, 0..255
+// New version of Gamma correction compute
+// Instead of a table, we do a multi-linear approximation, which is close enough
+// At low levels, the slope is a bit higher than actual gamma, to make changes smoother
+// Internal resolution is 10 bits.
+
+typedef struct gamma_table_t {
+  uint16_t to_src;
+  uint16_t to_gamma;
+} gamma_table_t;
+
+const gamma_table_t gamma_table[] = {   // don't put in PROGMEM for performance reasons
+  {    1,      1 },
+  {    4,      1 },
+  {  209,     13 },
+  {  312,     41 },
+  {  457,    106 },
+  {  626,    261 },
+  {  762,    450 },
+  {  895,    703 },
+  { 1023,   1023 },
+  { 0xFFFF, 0xFFFF }          // fail-safe if out of range
+};
+
+// simplified Gamma table for Fade, cheating a little at low brightness
+const gamma_table_t gamma_table_fast[] = {
+  {     0,      0 },
+  {   384,     67 },
+  {   768,    467 },
+  {  1023,   1023 },
+  { 0xFFFF, 0xFFFF }          // fail-safe if out of range
 };
 
 // For reference, below are the computed gamma tables, via ledGamma()
 // for 8 bits output:
-//  0,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
-//  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
-//  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  3,  3,  3,
-//  3,  3,  3,  3,  4,  4,  4,  4,  4,  4,  5,  5,  5,  5,  5,  6,
-//  6,  6,  6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9, 10, 10, 10,
-// 11, 11, 11, 12, 12, 12, 13, 13, 14, 14, 14, 15, 15, 16, 16, 17,
-// 17, 18, 18, 19, 19, 20, 20, 21, 21, 22, 23, 23, 24, 24, 25, 26,
-// 26, 27, 27, 28, 29, 29, 30, 31, 32, 32, 33, 34, 35, 35, 36, 37,
-// 38, 39, 39, 40, 41, 42, 43, 44, 45, 46, 47, 47, 48, 49, 50, 51,
-// 52, 53, 54, 55, 56, 58, 59, 60, 61, 62, 63, 64, 65, 66, 68, 69,
-// 70, 71, 72, 74, 75, 76, 78, 79, 80, 82, 83, 84, 86, 87, 88, 90,
-// 91, 93, 94, 96, 97, 99,100,102,103,105,106,108,110,111,113,115,
-//116,118,120,121,123,125,127,128,130,132,134,136,138,139,141,143,
-//145,147,149,151,153,155,157,159,161,163,165,168,170,172,174,176,
-//178,181,183,185,187,190,192,194,197,199,201,204,206,209,211,214,
-//216,219,221,224,226,229,232,234,237,240,242,245,248,250,253,255
+//   0,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
+//   1,  1,  1,  1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,
+//   2,  2,  2,  2,  2,  2,  2,  2,  2,  2,  3,  3,  3,  3,  3,  3,
+//   3,  3,  3,  3,  3,  3,  4,  4,  4,  4,  5,  5,  5,  6,  6,  6,
+//   6,  7,  7,  7,  7,  8,  8,  8,  9,  9,  9,  9, 10, 10, 10, 11,
+//  11, 12, 12, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 17, 17, 18,
+//  18, 19, 19, 20, 20, 21, 21, 21, 22, 22, 23, 23, 24, 24, 25, 25,
+//  25, 26, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 36, 37, 38,
+//  39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 50, 51, 52, 53,
+//  54, 55, 56, 57, 58, 59, 60, 61, 61, 62, 63, 64, 65, 67, 68, 69,
+//  71, 72, 73, 75, 76, 78, 79, 80, 82, 83, 85, 86, 87, 89, 90, 91,
+//  93, 94, 95, 97, 98,100,101,102,104,105,107,108,109,111,112,114,
+// 116,118,120,122,124,125,127,129,131,133,135,137,139,141,143,144,
+// 146,148,150,152,154,156,158,160,162,164,166,168,170,171,173,175,
+// 178,180,183,185,188,190,193,195,198,200,203,205,208,210,213,215,
+// 218,220,223,225,228,230,233,235,238,240,243,245,248,250,253,255
 //
 // and for 10 bits output:
-//  0,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
-//  1,  1,  1,  1,  2,  2,  2,  2,  2,  2,  2,  3,  3,  3,  3,  4,
-//  4,  4,  4,  5,  5,  5,  6,  6,  6,  7,  7,  8,  8,  9,  9, 10,
-// 10, 11, 11, 12, 13, 13, 14, 15, 15, 16, 17, 18, 19, 19, 20, 21,
-// 22, 23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 34, 36, 37, 38, 39,
-// 41, 42, 44, 45, 47, 48, 50, 51, 53, 55, 56, 58, 60, 62, 64, 65,
-// 67, 69, 71, 73, 75, 78, 80, 82, 84, 86, 89, 91, 93, 96, 98,101,
-//103,106,108,111,114,116,119,122,125,128,131,134,137,140,143,146,
-//151,155,157,161,165,169,171,175,179,183,187,189,193,197,201,205,
-//209,213,217,221,225,231,235,239,243,247,251,257,261,265,271,275,
-//281,285,289,295,299,305,311,315,321,327,331,337,343,347,353,359,
-//365,371,377,383,389,395,401,407,413,419,425,431,439,445,451,459,
-//467,475,483,487,495,503,511,515,523,531,539,547,555,559,567,575,
-//583,591,599,607,615,623,631,639,647,655,663,675,683,691,699,707,
-//715,727,735,743,751,763,771,779,791,799,807,819,827,839,847,859,
-//867,879,887,899,907,919,931,939,951,963,971,983,995,1003,1015,1023
+//    0,   1,   1,   1,   2,   2,   2,   2,   3,   3,   3,   3,   4,   4,   4,   4,
+//    5,   5,   5,   5,   5,   6,   6,   6,   6,   7,   7,   7,   7,   8,   8,   8,
+//    8,   8,   9,   9,   9,   9,  10,  10,  10,  10,  11,  11,  11,  11,  12,  12,
+//   12,  12,  13,  13,  13,  14,  15,  16,  17,  18,  20,  21,  22,  23,  24,  25,
+//   26,  27,  28,  29,  30,  31,  33,  34,  35,  36,  37,  38,  39,  40,  41,  43,
+//   45,  47,  49,  50,  52,  54,  56,  58,  59,  61,  63,  65,  67,  68,  70,  72,
+//   74,  76,  77,  79,  81,  83,  84,  86,  88,  90,  92,  93,  95,  97,  99, 101,
+//  102, 104, 106, 110, 113, 117, 121, 124, 128, 132, 135, 139, 143, 146, 150, 154,
+//  158, 162, 166, 169, 173, 177, 180, 184, 188, 191, 195, 199, 202, 206, 210, 213,
+//  217, 221, 224, 228, 232, 235, 239, 243, 246, 250, 254, 257, 261, 267, 272, 278,
+//  283, 289, 294, 300, 305, 311, 317, 322, 328, 333, 339, 344, 350, 356, 361, 367,
+//  372, 378, 383, 389, 394, 400, 406, 411, 417, 422, 428, 433, 439, 444, 450, 458,
+//  465, 473, 480, 488, 496, 503, 511, 518, 526, 534, 541, 549, 557, 564, 572, 579,
+//  587, 595, 602, 610, 617, 627, 635, 642, 650, 657, 665, 673, 680, 688, 695, 703,
+//  713, 723, 733, 743, 753, 763, 773, 783, 793, 803, 813, 823, 833, 843, 853, 863,
+//  873, 883, 893, 903, 913, 923, 933, 943, 953, 963, 973, 983, 993,1003,1013,1023
+//
+// Output for Dimmer 0..100 values
+//   0,  1,  2,  3,  3,  4,  4,  5,  5,  6,  7,  7,  8,  8,  9,
+//  10, 10, 11, 12, 12, 13, 15, 17, 21, 23, 26, 28, 31, 34, 37,
+//  40, 43, 49, 52, 58, 61, 67, 70, 76, 79, 84, 90, 93, 99,102,
+// 110,117,128,135,146,158,166,177,184,195,202,213,221,232,239,
+// 250,261,272,289,300,317,328,344,356,372,389,400,417,428,444,
+// 458,480,496,518,534,557,579,595,617,635,657,673,695,713,743,
+// 773,793,823,843,873,893,923,943,973,993,1023
 
 struct LIGHT {
   uint32_t strip_timer_counter = 0;  // Bars and Gradient
@@ -256,14 +265,11 @@ struct LIGHT {
   bool pwm_multi_channels = false;        // SetOption68, treat each PWM channel as an independant dimmer
 
   bool     fade_running = false;
-  uint8_t  fade_start_8[LST_MAX] = {0,0,0,0,0};
-  uint8_t  fade_cur_8[LST_MAX];
-  uint8_t  fade_end_8[LST_MAX];        // 8 bits resolution target channel values
   uint16_t fade_start_10[LST_MAX] = {0,0,0,0,0};
   uint16_t fade_cur_10[LST_MAX];
   uint16_t fade_end_10[LST_MAX];         // 10 bits resolution target channel values
-  uint16_t fade_counter = 0;             // fade timer in ticks (50ms)
-  uint16_t fade_duration = 0;            // duration of fade in ticks (50ms)
+  uint16_t fade_duration = 0;            // duration of fade in milliseconds
+  uint32_t fade_start = 0;               // fade start time in milliseconds, compared to millis()
 } Light;
 
 power_t LightPower(void)
@@ -1073,35 +1079,52 @@ LightStateClass light_state = LightStateClass();
 LightControllerClass light_controller = LightControllerClass(light_state);
 
 /*********************************************************************************************\
+ * Change scales from 8 bits to 10 bits and vice versa
+\*********************************************************************************************/
+// 8 to 10 to 8 is garanteed to give the same result
+uint16_t change8to10(uint8_t v) {
+  return changeUIntScale(v, 0, 255, 0, 1023);
+}
+// change from 10 bits to 8 bits, but any non-zero input will be non-zero
+uint8_t change10to8(uint16_t v) {
+  return (0 == v) ? 0 : changeUIntScale(v, 4, 1023, 1, 255);
+}
+
+/*********************************************************************************************\
  * Gamma correction
 \*********************************************************************************************/
 // Calculate the gamma corrected value for LEDS
-// You can request 11, 10, 9 or 8 bits resolution via 'bits_out' parameter
-uint16_t ledGamma(uint8_t v, uint16_t bits_out = 8) {
-  uint16_t result;
-  // bits_resolution: the resolution of _ledTable[v], between 8 and 11
-  uint32_t bits_resolution = 11 - (v / 64);                     // 8..11
-  int32_t  bits_correction = bits_out - bits_resolution;      // -3..3
-#ifdef XFUNC_PTR_IN_ROM
-  uint32_t uncorrected_value = pgm_read_byte(_ledTable + v);  // 0..255
-#else
-  uint32_t uncorrected_value = _ledTable[v];        // 0..255
-#endif
-  if (0 == bits_correction) {
-    // we already match the required resolution, no change
-    result = uncorrected_value;
-  } else if (bits_correction > 0) {
-    // the output resolution is higher than our value, we need to extrapolate
-    // we shift by bits_correction, and force last bits to 1
-    uint32_t bits_mask = (1 << bits_correction) - 1;  // 1, 3, 7
-    result = (uncorrected_value << bits_correction) | bits_mask;
-  } else {  // bits_correction < 0
-    // our resolution is too high, we need to remove bits
-    // we add 1, 3 or 7 to force rouding to the nearest high value
-    uint32_t bits_mask = (1 << -bits_correction) - 1;  // 1, 3, 7
-    result = ((uncorrected_value + bits_mask) >> -bits_correction);
+uint16_t ledGamma_internal(uint16_t v, const struct gamma_table_t *gt_ptr) {
+  uint16_t from_src = 0;
+  uint16_t from_gamma = 0;
+
+  for (const gamma_table_t *gt = gt_ptr; ; gt++) {
+    uint16_t to_src = gt->to_src;
+    uint16_t to_gamma = gt->to_gamma;
+    if (v <= to_src) {
+      return changeUIntScale(v, from_src, to_src, from_gamma, to_gamma);
+    }
+    from_src = to_src;
+    from_gamma = to_gamma;
   }
-  return result;
+}
+// 10_10 bits, fast fade mode
+uint16_t ledGamma10_10_fast(uint16_t v) {
+  return ledGamma_internal(v, gamma_table_fast);
+}
+
+// 10 bits in, 10 bits out
+uint16_t ledGamma10_10(uint16_t v) {
+  return ledGamma_internal(v, gamma_table);
+}
+// 10 bits resolution, 8 bits in
+uint16_t ledGamma10(uint8_t v) {
+  return ledGamma10_10(change8to10(v));
+}
+
+// Legacy function
+uint8_t ledGamma(uint8_t v) {
+  return change10to8(ledGamma10(v));
 }
 
 /********************************************************************************************/
@@ -1569,25 +1592,29 @@ void LightSetPower(void)
 // Light.power tells which lights or channels (SetOption68) are on/off
 void LightAnimate(void)
 {
-  uint8_t cur_col[LST_MAX];
   uint16_t light_still_on = 0;
   bool power_off = false;
 
   Light.strip_timer_counter++;
-  if (!Light.power) {                   // All channels powered off
-    Light.strip_timer_counter = 0;
-    if (!Light.fade_running) {
-      sleep = Settings.sleep;
-    }
-    if (Settings.light_scheme >= LS_MAX) {
-      power_off = true;
-    }
-  } else {
+
+  // set sleep parameter: either settings,
+  // or set a maximum of PWM_MAX_SLEEP if light is on or Fade is running
+  if (Light.power || Light.fade_running) {
     if (Settings.sleep > PWM_MAX_SLEEP) {
       sleep = PWM_MAX_SLEEP;      // set a maxumum value of 50 milliseconds to ensure that animations are smooth
     } else {
       sleep = Settings.sleep;     // or keep the current sleep if it's lower than 50
     }
+  } else {
+    sleep = Settings.sleep;
+  }
+
+  if (!Light.power) {                   // All channels powered off
+    Light.strip_timer_counter = 0;
+    if (Settings.light_scheme >= LS_MAX) {
+      power_off = true;
+    }
+  } else {
     switch (Settings.light_scheme) {
       case LS_POWER:
         light_controller.calcLevels(Light.new_color);
@@ -1648,112 +1675,102 @@ void LightAnimate(void)
       Light.update = true;
     }
     if (Light.update) {
-      uint16_t cur_col_10bits[LST_MAX];   // 10 bits version of cur_col for PWM
+      uint16_t cur_col_10[LST_MAX];   // 10 bits resolution
       Light.update = false;
 
       // first set 8 and 10 bits channels
       for (uint32_t i = 0; i < LST_MAX; i++) {
-        cur_col[i] = Light.last_color[i] = Light.new_color[i];
+        Light.last_color[i] = Light.new_color[i];
         // Extend from 8 to 10 bits if no correction (in case no gamma correction is required)
-        cur_col_10bits[i] = changeUIntScale(cur_col[i], 0, 255, 0, 1023);
+        cur_col_10[i] = change8to10(Light.new_color[i]);
       }
 
       if (Light.pwm_multi_channels) {
-        calcGammaMultiChannels(cur_col, cur_col_10bits);
+        calcGammaMultiChannels(cur_col_10);
       } else {
-        calcGammaBulbs(cur_col, cur_col_10bits);
+        calcGammaBulbs(cur_col_10);
         if (PHILIPS == my_module_type) {
-          calcGammaCTPwm(cur_col, cur_col_10bits);
+          calcGammaCTPwm(cur_col_10);
         }
 
         // Now see if we need to mix RGB and True White
         // Valid only for LST_RGBW, LST_RGBWC, rgbwwTable[4] is zero, and white is zero (see doc)
-        if ((LST_RGBW <= Light.subtype) && (0 == Settings.rgbwwTable[4]) && (0 == cur_col[3]+cur_col[4])) {
-          uint32_t min_rgb_10 = min3(cur_col_10bits[0], cur_col_10bits[1], cur_col_10bits[2]);
-          uint8_t min_rgb = min3(cur_col[0], cur_col[1], cur_col[2]);
+        if ((LST_RGBW <= Light.subtype) && (0 == Settings.rgbwwTable[4]) && (0 == cur_col_10[3]+cur_col_10[4])) {
+          uint32_t min_rgb_10 = min3(cur_col_10[0], cur_col_10[1], cur_col_10[2]);
           for (uint32_t i=0; i<3; i++) {
             // substract white and adjust according to rgbwwTable
-            uint32_t adjust10 = changeUIntScale(Settings.rgbwwTable[i], 0, 255, 0, 1023);
-            cur_col_10bits[i] = changeUIntScale(cur_col_10bits[i] - min_rgb_10, 0, 1023, 0, adjust10);
-            cur_col[i] = changeUIntScale(cur_col[i] - min_rgb, 0, 255, 0, Settings.rgbwwTable[i]);
+            uint32_t adjust10 = change8to10(Settings.rgbwwTable[i]);
+            cur_col_10[i] = changeUIntScale(cur_col_10[i] - min_rgb_10, 0, 1023, 0, adjust10);
           }
+
           // compute the adjusted white levels for 10 and 8 bits
-          uint32_t white_10 = changeUIntScale(min_rgb_10, 0, 255, 0, Settings.rgbwwTable[3]);  // set white power down corrected with rgbwwTable[3]
-          uint32_t white = changeUIntScale(min_rgb, 0, 255, 0, Settings.rgbwwTable[3]);  // set white power down corrected with rgbwwTable[3]
+          uint32_t adjust_w_10 = changeUIntScale(Settings.rgbwwTable[3], 0, 255, 0, 1023);
+          uint32_t white_10 = changeUIntScale(min_rgb_10, 0, 1023, 0, adjust_w_10);  // set white power down corrected with rgbwwTable[3]
           if (LST_RGBW == Light.subtype) {
             // we simply set the white channel
-            cur_col_10bits[3] = white_10;
-            cur_col[3] = white;
+            cur_col_10[3] = white_10;
           } else {  // LST_RGBWC
             // we distribute white between cold and warm according to CT value
             uint32_t ct = light_state.getCT();
-            cur_col_10bits[4] = changeUIntScale(ct, 153, 500, 0, white_10);
-            cur_col_10bits[3] = white_10 - cur_col_10bits[4];
-            cur_col[4] = changeUIntScale(ct, 153, 500, 0, white);
-            cur_col[3] = white - cur_col[4];
+            cur_col_10[4] = changeUIntScale(ct, 153, 500, 0, white_10);
+            cur_col_10[3] = white_10 - cur_col_10[4];
           }
         }
       }
 
       // final adjusments for PMW, post-gamma correction
       for (uint32_t i = 0; i < LST_MAX; i++) {
-#if defined(ARDUINO_ESP8266_RELEASE_2_3_0) || defined(ARDUINO_ESP8266_RELEASE_2_4_0) || defined(ARDUINO_ESP8266_RELEASE_2_4_1) || defined(ARDUINO_ESP8266_RELEASE_2_4_2)
-        // Fix unwanted blinking and PWM watchdog errors for values close to pwm_range (H801, Arilux and BN-SZ01)
-        // but keep value 1023 if full range (PWM will be deactivated in this case)
-        if ((cur_col_10bits[i] > 1008) && (cur_col_10bits[i] < 1023)) {
-          cur_col_10bits[i] = 1008;
-        }
-#endif
         // scale from 0..1023 to 0..pwm_range, but keep any non-zero value to at least 1
-        cur_col_10bits[i] = (cur_col_10bits[i] > 0) ? changeUIntScale(cur_col_10bits[i], 1, 1023, 1, Settings.pwm_range) : 0;
+        cur_col_10[i] = (cur_col_10[i] > 0) ? changeUIntScale(cur_col_10[i], 1, 1023, 1, Settings.pwm_range) : 0;
       }
 
       // apply port remapping on both 8 bits and 10 bits versions
-      uint8_t  orig_col[LST_MAX];
       uint16_t orig_col_10bits[LST_MAX];
-      memcpy(orig_col, cur_col, sizeof(orig_col));
-      memcpy(orig_col_10bits, cur_col_10bits, sizeof(orig_col_10bits));
+      memcpy(orig_col_10bits, cur_col_10, sizeof(orig_col_10bits));
       for (uint32_t i = 0; i < LST_MAX; i++) {
-        cur_col[i] = orig_col[Light.color_remap[i]];
-        cur_col_10bits[i] = orig_col_10bits[Light.color_remap[i]];
+        cur_col_10[i] = orig_col_10bits[Light.color_remap[i]];
       }
 
       if (!Settings.light_fade || power_off) { // no fade
         // record the current value for a future Fade
-        memcpy(Light.fade_start_8, cur_col, sizeof(Light.fade_start_8));
-        memcpy(Light.fade_start_10, cur_col_10bits, sizeof(Light.fade_start_10));
+        memcpy(Light.fade_start_10, cur_col_10, sizeof(Light.fade_start_10));
         // push the final values at 8 and 10 bits resolution to the PWMs
-        LightSetOutputs(cur_col, cur_col_10bits);
+        LightSetOutputs(cur_col_10);
       } else {  // fade on
         if (Light.fade_running) {
           // if fade is running, we take the curring value as the start for the next fade
-          memcpy(Light.fade_start_8, Light.fade_cur_8, sizeof(Light.fade_start_8));
           memcpy(Light.fade_start_10, Light.fade_cur_10, sizeof(Light.fade_start_10));
         }
-        memcpy(Light.fade_end_8, cur_col, sizeof(Light.fade_start_8));
-        memcpy(Light.fade_end_10, cur_col_10bits, sizeof(Light.fade_start_10));
+        memcpy(Light.fade_end_10, cur_col_10, sizeof(Light.fade_start_10));
         Light.fade_running = true;
-        Light.fade_counter = 0;
         Light.fade_duration = 0;    // set the value to zero to force a recompute
+        Light.fade_start = 0;
         // Fade will applied immediately below
       }
     }
     if (Light.fade_running) {
-      LightApplyFade();
-      // AddLog_P2(LOG_LEVEL_INFO, PSTR("LightApplyFade %d %d %d %d %d - %d %d %d %d %d"),
-      //   Light.fade_cur_8[0], Light.fade_cur_8[1], Light.fade_cur_8[2], Light.fade_cur_8[3], Light.fade_cur_8[4],
-      //   Light.fade_cur_10[0], Light.fade_cur_10[1], Light.fade_cur_10[2], Light.fade_cur_10[3], Light.fade_cur_10[4]);
+      if (LightApplyFade()) {
+        // AddLog_P2(LOG_LEVEL_INFO, PSTR("LightApplyFade %d %d %d %d %d"),
+        //   Light.fade_cur_10[0], Light.fade_cur_10[1], Light.fade_cur_10[2], Light.fade_cur_10[3], Light.fade_cur_10[4]);
 
-      LightSetOutputs(Light.fade_cur_8, Light.fade_cur_10);
+        LightSetOutputs(Light.fade_cur_10);
+      }
     }
   }
 }
 
-void LightApplyFade(void) {
+bool LightApplyFade(void) {   // did the value chanegd and needs to be applied
+  static uint32_t last_millis = 0;
+  uint32_t now = millis();
+
+  if ((now - last_millis) <= 5) {
+    return false;     // the value was not changed in the last 5 milliseconds, ignore
+  }
+  last_millis = now;
 
   // Check if we need to calculate the duration
   if (0 == Light.fade_duration) {
-    Light.fade_counter = 0;
+    Light.fade_start = now;
     // compute the distance between start and and color (max of distance for each channel)
     uint32_t distance = 0;
     for (uint32_t i = 0; i < Light.subtype; i++) {
@@ -1764,26 +1781,27 @@ void LightApplyFade(void) {
     if (distance > 0) {
       // compute the duration of the animation
       // Note: Settings.light_speed is the number of half-seconds for a 100% fade,
-      // i.e. light_speed=1 means 1024 steps in 10 ticks (500ms)
-      Light.fade_duration = (distance * Settings.light_speed * 10) / 1024;
-      // Also postpone the save_data for the duration of the Fade (in seconds)
-      uint32_t delay_seconds = 1 + (Light.fade_duration + 19) / 20;   // add one more second
-      // AddLog_P2(LOG_LEVEL_INFO, PSTR("delay_seconds %d, save_data_counter %d"), delay_seconds, save_data_counter);
-      if (save_data_counter < delay_seconds) {
-        save_data_counter = delay_seconds;      // pospone
+      // i.e. light_speed=1 means 1024 steps in 500ms
+      Light.fade_duration = (distance * Settings.light_speed * 500) / 1023;
+      if (Settings.save_data) {
+        // Also postpone the save_data for the duration of the Fade (in seconds)
+        uint32_t delay_seconds = 1 + (Light.fade_duration + 999) / 1000;   // add one more second
+        // AddLog_P2(LOG_LEVEL_INFO, PSTR("delay_seconds %d, save_data_counter %d"), delay_seconds, save_data_counter);
+        if (save_data_counter < delay_seconds) {
+          save_data_counter = delay_seconds;      // pospone
+        }
       }
     } else {
       // no fade needed, we keep the duration at zero, it will fallback directly to end of fade
+      Light.fade_running = false;
     }
   }
 
-  Light.fade_counter++;
-  if (Light.fade_counter <= Light.fade_duration) {    // fade not finished
+  uint16_t fade_current = now - Light.fade_start;   // number of milliseconds since start of fade
+  if (fade_current <= Light.fade_duration) {    // fade not finished
+    //Serial.printf("Fade: %d / %d - ", fade_current, Light.fade_duration);
     for (uint32_t i = 0; i < Light.subtype; i++) {
-      Light.fade_cur_8[i] = changeUIntScale(Light.fade_counter,
-                                            0, Light.fade_duration,
-                                            Light.fade_start_8[i], Light.fade_end_8[i]);
-      Light.fade_cur_10[i] = changeUIntScale(Light.fade_counter,
+      Light.fade_cur_10[i] = changeUIntScale(fade_current,
                                               0, Light.fade_duration,
                                               Light.fade_start_10[i], Light.fade_end_10[i]);
     }
@@ -1791,16 +1809,14 @@ void LightApplyFade(void) {
     // stop fade
 //AddLop_P2(LOG_LEVEL_DEBUG, PSTR("Stop fade"));
     Light.fade_running = false;
-    Light.fade_counter = 0;
+    Light.fade_start = 0;
     Light.fade_duration = 0;
     // set light to target value
-    memcpy(Light.fade_cur_8, Light.fade_end_8, sizeof(Light.fade_end_8));
     memcpy(Light.fade_cur_10, Light.fade_end_10, sizeof(Light.fade_end_10));
     // record the last value for next start
-    memcpy(Light.fade_start_8, Light.fade_end_8, sizeof(Light.fade_start_8));
     memcpy(Light.fade_start_10, Light.fade_end_10, sizeof(Light.fade_start_10));
   }
-
+  return true;
 }
 
 // On entry we take the 5 channels 8 bits entry, and we apply Power modifiers
@@ -1836,19 +1852,24 @@ void LightApplyPower(uint8_t new_color[LST_MAX], power_t power) {
   }
 }
 
-void LightSetOutputs(const uint8_t *cur_col, const uint16_t *cur_col_10bits) {
+void LightSetOutputs(const uint16_t *cur_col_10) {
   // now apply the actual PWM values, adjusted and remapped 10-bits range
   if (light_type < LT_PWM6) {   // only for direct PWM lights, not for Tuya, Armtronix...
     for (uint32_t i = 0; i < (Light.subtype - Light.pwm_offset); i++) {
       if (pin[GPIO_PWM1 +i] < 99) {
-        //AddLog_P2(LOG_LEVEL_DEBUG, PSTR(D_LOG_APPLICATION "Cur_Col%d 10 bits %d, Pwm%d %d"), i, cur_col_10bits[i], i+1, cur_col[i]);
-        analogWrite(pin[GPIO_PWM1 +i], bitRead(pwm_inverted, i) ? Settings.pwm_range - cur_col_10bits[(i + Light.pwm_offset)] : cur_col_10bits[(i + Light.pwm_offset)]);
+        //AddLog_P2(LOG_LEVEL_DEBUG, PSTR(D_LOG_APPLICATION "Cur_Col%d 10 bits %d"), i, cur_col_10[i]);
+        analogWrite(pin[GPIO_PWM1 +i], bitRead(pwm_inverted, i) ? Settings.pwm_range - cur_col_10[(i + Light.pwm_offset)] : cur_col_10[(i + Light.pwm_offset)]);
       }
     }
   }
-  // AddLog_P2(LOG_LEVEL_DEBUG_MORE, PSTR("LGT: R %02X(%d) G %02X(%d) B %02X(%d), CW %02X(%d) WW %02x(%d), D %d"),
-  // cur_col[0], cur_col_10bits[0], cur_col[1], cur_col_10bits[1], cur_col[2], cur_col_10bits[2], cur_col[3], cur_col_10bits[3], cur_col[4], cur_col_10bits[4], light_state.getDimmer());
-
+  char msg[24];
+  AddLog_P2(LOG_LEVEL_DEBUG, PSTR("LGT: Channels %s"),
+            ToHex_P((const unsigned char *)cur_col_10, 10, msg, sizeof(msg)));
+  
+  uint8_t cur_col[LST_MAX];
+  for (uint32_t i = 0; i < LST_MAX; i++) {
+    cur_col[i] = change10to8(cur_col_10[i]);
+  }
   // Some devices need scaled RGB like Sonoff L1
   // TODO, should be probably moved to the Sonoff L1 support code
   uint8_t scale_col[3];
@@ -1856,8 +1877,6 @@ void LightSetOutputs(const uint8_t *cur_col, const uint16_t *cur_col_10bits) {
   for (uint32_t i = 0; i < 3; i++) {
     scale_col[i] = (0 == max) ? 255 : (255 > max) ? changeUIntScale(cur_col[i], 0, max, 0, 255) : cur_col[i];
   }
-  // AddLog_P2(LOG_LEVEL_DEBUG_MORE, PSTR("LGT: R%d(%d) G%d(%d) B%d(%d), C%d(%d) W%d(%d), D%d"),
-  //   cur_col[0], scale_col[0], cur_col[1], scale_col[1], cur_col[2], scale_col[2], cur_col[3], scale_col[3], cur_col[4], scale_col[4], light_state.getDimmer());
 
   char *tmp_data = XdrvMailbox.data;
   char *tmp_topic = XdrvMailbox.topic;
@@ -1870,7 +1889,7 @@ void LightSetOutputs(const uint8_t *cur_col, const uint16_t *cur_col_10bits) {
 }
 
 // Do specific computation is SetOption73 is on, Color Temp is a separate PWM channel
-void calcGammaCTPwm(uint8_t cur_col[5], uint16_t cur_col_10bits[5]) {
+void calcGammaCTPwm(uint16_t cur_col_10[5]) {
   // Xiaomi Philips bulbs follow a different scheme:
   uint8_t cold, warm;   // channel 1 is the color tone, mapped to cold channel (0..255)
   light_state.getCW(&cold, &warm);
@@ -1878,32 +1897,28 @@ void calcGammaCTPwm(uint8_t cur_col[5], uint16_t cur_col_10bits[5]) {
   uint32_t cw1 = Light.subtype - 1;       // address for the ColorTone PWM
   uint32_t cw0 = Light.subtype - 2;       // address for the White Brightness PWM
   // overall brightness
-  uint16_t pxBri = cur_col[cw0] + cur_col[cw1];
-  if (pxBri > 255) { pxBri = 255; }
-  cur_col[cw1] = changeUIntScale(cold, 0, cold + warm, 0, 255);   //
-  cur_col_10bits[cw1] = changeUIntScale(cur_col[cw1], 0, 255, 0, 1023);
+  uint16_t pxBri10 = cur_col_10[cw0] + cur_col_10[cw1];
+  if (pxBri10 > 1023) { pxBri10 = 1023; }
+  cur_col_10[cw1] = changeUIntScale(cold, 0, cold + warm, 0, 1023);   //
   // channel 0=intensity, channel1=temperature
   if (Settings.light_correction) { // gamma correction
-    cur_col[cw0] = ledGamma(pxBri);
-    cur_col_10bits[cw0] = ledGamma(pxBri, 10);    // 10 bits gamma correction
+    cur_col_10[cw0] = ledGamma10_10(pxBri10);    // 10 bits gamma correction
   } else {
-    cur_col[cw0] = pxBri;
-    cur_col_10bits[cw0] = changeUIntScale(pxBri, 0, 255, 0, 1023);  // no gamma, extend to 10 bits
+    cur_col_10[cw0] = pxBri10;  // no gamma, extend to 10 bits
   }
 }
 
 // Just apply basic Gamma to each channel
-void calcGammaMultiChannels(uint8_t cur_col[5], uint16_t cur_col_10bits[5]) {
+void calcGammaMultiChannels(uint16_t cur_col_10[5]) {
   // Apply gamma correction for 8 and 10 bits resolutions, if needed
   if (Settings.light_correction) {
     for (uint32_t i = 0; i < LST_MAX; i++) {
-      cur_col_10bits[i] = ledGamma(cur_col[i], 10);
-      cur_col[i] = ledGamma(cur_col[i]);
+      cur_col_10[i] = ledGamma10_10(cur_col_10[i]);
     }
   }
 }
 
-void calcGammaBulbs(uint8_t cur_col[5], uint16_t cur_col_10bits[5]) {
+void calcGammaBulbs(uint16_t cur_col_10[5]) {
   // Apply gamma correction for 8 and 10 bits resolutions, if needed
   if (Settings.light_correction) {
     // First apply combined correction to the overall white power
@@ -1913,35 +1928,28 @@ void calcGammaBulbs(uint8_t cur_col[5], uint16_t cur_col_10bits[5]) {
         w_idx[0] = 3;
         w_idx[1] = 4;
       }
-      uint16_t white_bri = cur_col[w_idx[0]] + cur_col[w_idx[1]];
+      uint16_t white_bri10 = cur_col_10[w_idx[0]] + cur_col_10[w_idx[1]];
       // if sum of both channels is > 255, then channels are probablu uncorrelated
-      if (white_bri <= 255) {
+      if (white_bri10 <= 1023) {
         // we calculate the gamma corrected sum of CW + WW
-        uint16_t white_bri_10bits = ledGamma(white_bri, 10);
-        uint8_t white_bri_8bits = ledGamma(white_bri);
+        uint16_t white_bri_10bits = ledGamma10_10(white_bri10);
         // then we split the total energy among the cold and warm leds
-        cur_col_10bits[w_idx[0]] = changeUIntScale(cur_col[w_idx[0]], 0, white_bri, 0, white_bri_10bits);
-        cur_col_10bits[w_idx[1]] = changeUIntScale(cur_col[w_idx[1]], 0, white_bri, 0, white_bri_10bits);
-        cur_col[w_idx[0]] = changeUIntScale(cur_col[w_idx[0]], 0, white_bri, 0, white_bri_8bits);
-        cur_col[w_idx[1]] = changeUIntScale(cur_col[w_idx[1]], 0, white_bri, 0, white_bri_8bits);
+        cur_col_10[w_idx[0]] = changeUIntScale(cur_col_10[w_idx[0]], 0, white_bri10, 0, white_bri_10bits);
+        cur_col_10[w_idx[1]] = changeUIntScale(cur_col_10[w_idx[1]], 0, white_bri10, 0, white_bri_10bits);
       } else {
-        cur_col_10bits[w_idx[0]] = ledGamma(cur_col[w_idx[0]], 10);
-        cur_col_10bits[w_idx[1]] = ledGamma(cur_col[w_idx[1]], 10);
-        cur_col[w_idx[0]] = ledGamma(cur_col[w_idx[0]]);
-        cur_col[w_idx[1]] = ledGamma(cur_col[w_idx[1]]);
+        cur_col_10[w_idx[0]] = ledGamma10_10(cur_col_10[w_idx[0]]);
+        cur_col_10[w_idx[1]] = ledGamma10_10(cur_col_10[w_idx[1]]);
       }
     }
     // then apply gamma correction to RGB channels
     if (LST_RGB <= Light.subtype) {
       for (uint32_t i = 0; i < 3; i++) {
-        cur_col_10bits[i] = ledGamma(cur_col[i], 10);
-        cur_col[i] = ledGamma(cur_col[i]);
+        cur_col_10[i] = ledGamma10_10(cur_col_10[i]);
       }
     }
     // If RGBW or Single channel, also adjust White channel
     if ((LST_COLDWARM != Light.subtype) && (LST_RGBWC != Light.subtype)) {
-      cur_col_10bits[3] = ledGamma(cur_col[3], 10);
-      cur_col[3] = ledGamma(cur_col[3]);
+      cur_col_10[3] = ledGamma10_10(cur_col_10[3]);
     }
   }
 }
@@ -2425,6 +2433,13 @@ bool Xdrv04(uint8_t function)
     switch (function) {
       case FUNC_SERIAL:
         result = XlgtCall(FUNC_SERIAL);
+        break;
+      case FUNC_LOOP:
+        if (Light.fade_running) {
+          if (LightApplyFade()) {
+            LightSetOutputs(Light.fade_cur_10);
+          }
+        }
         break;
       case FUNC_EVERY_50_MSECOND:
         LightAnimate();

@@ -68,7 +68,7 @@
 // Structs
 #include "settings.h"
 
-const char kCodeImage[] PROGMEM = "tasmota|minimal|sensors|knx|basic|display|ir";
+const char kCodeImage[] PROGMEM = "tasmota|minimal|sensors|knx|lite|display|ir";
 
 /*********************************************************************************************\
  * Global variables
@@ -161,8 +161,8 @@ StateBitfield global_state;                 // Global states (currently Wifi and
 char my_version[33];                        // Composed version string
 char my_image[33];                          // Code image and/or commit
 char my_hostname[33];                       // Composed Wifi hostname
-char mqtt_client[33];                       // Composed MQTT Clientname
-char mqtt_topic[33];                        // Composed MQTT topic
+char mqtt_client[TOPSZ];                    // Composed MQTT Clientname
+char mqtt_topic[TOPSZ];                     // Composed MQTT topic
 char serial_in_buffer[INPUT_BUFFER_SIZE];   // Receive buffer
 char mqtt_data[MESSZ];                      // MQTT publish buffer and web page ajax buffer
 char log_data[LOGSZ];                       // Logging
@@ -194,8 +194,6 @@ void setup(void)
   RtcRebootSave();
 
   Serial.begin(baudrate);
-  delay(10);
-  Serial.println();
   seriallog_level = LOG_LEVEL_INFO;  // Allow specific serial messages until config loaded
 
   snprintf_P(my_version, sizeof(my_version), PSTR("%d.%d.%d"), VERSION >> 24 & 0xff, VERSION >> 16 & 0xff, VERSION >> 8 & 0xff);  // Release version 6.3.0
@@ -333,6 +331,8 @@ void setup(void)
 #ifdef FIRMWARE_MINIMAL
   AddLog_P2(LOG_LEVEL_INFO, PSTR(D_WARNING_MINIMAL_VERSION));
 #endif  // FIRMWARE_MINIMAL
+
+  memcpy_P(log_data, VERSION_MARKER, 1);  // Dummy for compiler saving VERSION_MARKER
 
   RtcInit();
 
